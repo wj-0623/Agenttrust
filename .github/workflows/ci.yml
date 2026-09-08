@@ -1,0 +1,135 @@
+name: AgentTrust CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      AGENTTRUST_BUILD_REVISION: ${{ github.sha }}
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: agenttrust
+          POSTGRES_PASSWORD: postgres-ci-only
+          POSTGRES_DB: agenttrust_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agenttrust -d agenttrust_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: Static quality gate
+        run: python -m ruff check backend/app backend/tests
+      - name: Security scan
+        run: python -m bandit -r backend/app -q
+      - name: Dependency vulnerability audit
+        run: python -m pip_audit -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: Test SQLite local mode
+        working-directory: backend
+        run: >-
+          python -m pytest tests -q
+          --cov=app --cov-branch
+          --cov-config=../pyproject.toml
+          --cov-report=term-missing:skip-covered
+          --cov-report=xml:coverage.xml
+          --cov-fail-under=75
+      - name: Upload backend coverage
+        uses: actions/upload-artifact@v5
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          if-no-files-found: error
+      - name: Test PostgreSQL SaaS mode
+        working-directory: backend
+        env:
+          AGENTTRUST_DATABASE_URL: postgresql://agenttrust:postgres-ci-only@127.0.0.1:5432/agenttrust_test
+        run: python -m pytest tests -q
+      - name: Test non-superuser RLS and pooled tenant isolation
+        working-directory: backend
+        env:
+          AGENTTRUST_TEST_RLS_ADMIN_URL: postgresql://agenttrust:postgres-ci-only@127.0.0.1:5432/agenttrust_test
+        run: python -m pytest tests/test_postgres_rls.py -q
+
+  compose:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-admin-not-for-production
+      POSTGRES_APP_PASSWORD: ci-runtime-not-for-production
+      AGENTTRUST_AUDIT_ANCHOR_SECRET: ci-anchor-not-for-production
+      AGENTTRUST_BOOTSTRAP_TOKEN: ci-bootstrap-not-for-production
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate Compose and build runtime images
+        run: |
+          docker compose config --quiet
+          docker compose build api pgbouncer
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Dependency vulnerability audit
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+      - name: Typecheck and production build
+        working-directory: frontend
+        run: npm run build
+      - name: Generate npm CycloneDX SBOM
+        working-directory: frontend
+        run: npm sbom --package-lock-only --sbom-format cyclonedx > npm.cdx.json
+      - name: Upload frontend SBOM
+        uses: actions/upload-artifact@v5
+        with:
+          name: frontend-sbom
+          path: frontend/npm.cdx.json
+          if-no-files-found: error
+
+  python-sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pip-audit==2.10.1
+      - name: Generate Python CycloneDX SBOM
+        run: >-
+          python -m pip_audit
+          -r backend/requirements.txt
+          -r backend/requirements-dev.txt
+          --format cyclonedx-json
+          --output python.cdx.json
+      - name: Upload Python SBOM
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-sbom
+          path: python.cdx.json
+          if-no-files-found: error

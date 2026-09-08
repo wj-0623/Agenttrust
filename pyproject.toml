@@ -1,0 +1,17 @@
+[tool.coverage.run]
+branch = true
+source = ["backend/app"]
+omit = [
+  "backend/app/temporal_worker.py",
+  "backend/app/temporal_workflows.py",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+

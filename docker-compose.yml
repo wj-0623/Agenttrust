@@ -1,0 +1,172 @@
+services:
+  volume-init:
+    image: postgres:18-alpine
+    user: root
+    command: ["sh", "-ec", "chown postgres:postgres /wal_archive /backups"]
+    volumes:
+      - agenttrust-postgres-wal:/wal_archive
+      - agenttrust-postgres-backups:/backups
+
+  postgres:
+    image: postgres:18-alpine
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: agenttrust
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: agenttrust
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /wal_archive/%f && cp %p /wal_archive/%f
+    volumes:
+      - agenttrust-postgres:/var/lib/postgresql
+      - agenttrust-postgres-wal:/wal_archive
+      - ./ops/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenttrust -d agenttrust"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: ./backend
+    command: ["python", "-m", "app.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AGENTTRUST_DATABASE_URL: postgresql://agenttrust:${POSTGRES_PASSWORD}@postgres:5432/agenttrust
+      AGENTTRUST_POSTGRES_RLS: "true"
+
+  pgbouncer:
+    build: ./ops/pgbouncer
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
+    tmpfs: [/tmp]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  temporal:
+    image: temporalio/auto-setup:1.30.4
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: agenttrust
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "127.0.0.1:7233:7233"
+
+  phoenix:
+    image: arizephoenix/phoenix:19.10.0
+    volumes:
+      - agenttrust-phoenix:/mnt/data
+    ports:
+      - "127.0.0.1:6006:6006"
+
+  api:
+    build: ./backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      phoenix:
+        condition: service_started
+    environment:
+      AGENTTRUST_ENV: production
+      AGENTTRUST_DATABASE_URL: postgresql://agenttrust_app:${POSTGRES_APP_PASSWORD}@pgbouncer:6432/agenttrust
+      AGENTTRUST_AUTO_INITIALIZE: "false"
+      AGENTTRUST_POSTGRES_RLS: "true"
+      AGENTTRUST_POSTGRES_APP_ROLE: agenttrust_app
+      AGENTTRUST_CORS_ORIGINS: http://localhost:5173
+      AGENTTRUST_REQUIRE_API_KEY: "true"
+      AGENTTRUST_DOCS_ENABLED: "false"
+      AGENTTRUST_OTEL_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006/v1/traces
+      OTEL_SERVICE_NAME: agenttrust-api
+      PHOENIX_PROJECT_NAME: agenttrust-security
+      PHOENIX_BASE_URL: http://phoenix:6006
+      AGENTTRUST_TEMPORAL_ENABLED: "true"
+      AGENTTRUST_TEMPORAL_TARGET: temporal:7233
+      AGENTTRUST_TEMPORAL_TASK_QUEUE: agenttrust-refunds-v2
+      AGENTTRUST_SECURITY_HSTS: "true"
+      AGENTTRUST_DLP_ENABLED: "true"
+      AGENTTRUST_DLP_INPUT_ACTION: redact
+      AGENTTRUST_DLP_OUTPUT_ACTION: block
+      AGENTTRUST_AUDIT_ANCHOR_SECRET: ${AGENTTRUST_AUDIT_ANCHOR_SECRET:?AGENTTRUST_AUDIT_ANCHOR_SECRET must be set}
+      AGENTTRUST_BOOTSTRAP_TOKEN: ${AGENTTRUST_BOOTSTRAP_TOKEN:?AGENTTRUST_BOOTSTRAP_TOKEN must be set}
+      AGENTTRUST_SECURITY_WEBHOOK_URL: ${AGENTTRUST_SECURITY_WEBHOOK_URL:-}
+      AGENTTRUST_SECURITY_WEBHOOK_SECRET: ${AGENTTRUST_SECURITY_WEBHOOK_SECRET:-}
+      AGENTTRUST_OIDC_ISSUER: ${AGENTTRUST_OIDC_ISSUER:-}
+      AGENTTRUST_OIDC_AUDIENCE: ${AGENTTRUST_OIDC_AUDIENCE:-agenttrust-api}
+      AGENTTRUST_OIDC_JWKS_URL: ${AGENTTRUST_OIDC_JWKS_URL:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+    ports:
+      - "127.0.0.1:8010:8000"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  temporal-worker:
+    build: ./backend
+    command: ["python", "-m", "app.temporal_worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      AGENTTRUST_ENV: production
+      AGENTTRUST_DATABASE_URL: postgresql://agenttrust_app:${POSTGRES_APP_PASSWORD}@pgbouncer:6432/agenttrust
+      AGENTTRUST_AUTO_INITIALIZE: "false"
+      AGENTTRUST_POSTGRES_RLS: "true"
+      AGENTTRUST_POSTGRES_APP_ROLE: agenttrust_app
+      AGENTTRUST_TEMPORAL_ENABLED: "true"
+      AGENTTRUST_TEMPORAL_TARGET: temporal:7233
+      AGENTTRUST_TEMPORAL_TASK_QUEUE: agenttrust-refunds-v2
+      AGENTTRUST_AUDIT_ANCHOR_SECRET: ${AGENTTRUST_AUDIT_ANCHOR_SECRET:?AGENTTRUST_AUDIT_ANCHOR_SECRET must be set}
+
+  postgres-backup:
+    image: postgres:18-alpine
+    profiles: ["backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: agenttrust
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      PGDATABASE: agenttrust
+    volumes:
+      - agenttrust-postgres-backups:/backups
+      - ./ops/postgres-backup.sh:/opt/backup.sh:ro
+    user: postgres
+    command: ["sh", "/opt/backup.sh"]
+
+volumes:
+  agenttrust-postgres:
+  agenttrust-postgres-wal:
+  agenttrust-postgres-backups:
+  agenttrust-phoenix:

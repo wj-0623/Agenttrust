@@ -1,0 +1,84 @@
+name: Release Evidence
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install and verify backend
+        run: |
+          python -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+          python -m ruff check backend/app backend/tests
+          python -m bandit -r backend/app -q
+          cd backend
+          python -m pytest tests -q --cov=app --cov-branch --cov-config=../pyproject.toml --cov-fail-under=75
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Build source archive and SBOMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release
+          git archive --format=zip --prefix=agenttrust/ HEAD > release/agenttrust-source.zip
+          python -m pip install pip-audit==2.10.1
+          python -m pip_audit -r backend/requirements.txt -r backend/requirements-dev.txt \
+            --format cyclonedx-json --output release/agenttrust-python.cdx.json
+          cd frontend
+          npm sbom --package-lock-only --sbom-format cyclonedx > ../release/agenttrust-npm.cdx.json
+          cd ..
+          sha256sum release/* > release/SHA256SUMS
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: release/*
+      - uses: actions/upload-artifact@v5
+        with:
+          name: release-evidence
+          path: release/
+          if-no-files-found: error
+      - name: Publish GitHub release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" release/*
+          --verify-tag
+          --generate-notes
+          --title "AgentTrust $GITHUB_REF_NAME"

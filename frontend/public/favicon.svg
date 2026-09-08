@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AgentTrust">
+  <rect width="64" height="64" rx="15" fill="#07100e"/>
+  <path d="M32 7 53 16v15c0 13-8.6 22-21 27C19.6 53 11 44 11 31V16L32 7Z" fill="#10b981" opacity=".2" stroke="#34d399" stroke-width="3"/>
+  <path d="m22 40 8-19h4l8 19h-5l-1.8-4.7h-7L26.5 40H22Zm7.8-8.9h3.8l-1.9-5.2-1.9 5.2Z" fill="#ecfdf5"/>
+</svg>

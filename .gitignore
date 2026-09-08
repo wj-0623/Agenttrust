@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+backend/data/
+backend/test-data/
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# Secrets and local runtime
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+
+# IDE and OS
+.vscode/*
+!.vscode/tasks.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
