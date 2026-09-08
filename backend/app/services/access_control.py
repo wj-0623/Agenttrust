@@ -378,7 +378,7 @@ class AccessControlService:
             """
             SELECT DISTINCT o.* FROM organizations o
             JOIN workspaces w ON w.organization_id = o.id
-            WHERE (? IS NULL OR w.id = ?) ORDER BY o.created_at
+            WHERE (CAST(? AS TEXT) IS NULL OR w.id = ?) ORDER BY o.created_at
             """,
             params,
         )
@@ -389,7 +389,7 @@ class AccessControlService:
             FROM workspaces w
             LEFT JOIN workspace_projects wp ON wp.workspace_id = w.id
             LEFT JOIN memberships m ON m.workspace_id = w.id
-            WHERE (? IS NULL OR w.id = ?)
+            WHERE (CAST(? AS TEXT) IS NULL OR w.id = ?)
             GROUP BY w.id ORDER BY w.created_at
             """,
             params,
@@ -403,7 +403,9 @@ class AccessControlService:
                        WHERE u.api_key_id = api_keys.id AND u.created_at >= ?
                    ), 0) AS spend_usd,
                    requests_count, status, last_used_at, created_at
-            FROM api_keys WHERE (? IS NULL OR workspace_id = ?) ORDER BY created_at DESC
+            FROM api_keys
+            WHERE (CAST(? AS TEXT) IS NULL OR workspace_id = ?)
+            ORDER BY created_at DESC
             """,
             (month_start, workspace_id, workspace_id),
         )
@@ -414,7 +416,7 @@ class AccessControlService:
             SELECT m.workspace_id, m.role, i.id AS identity_id, i.subject,
                    i.display_name, i.provider, m.created_at
             FROM memberships m JOIN identities i ON i.id = m.identity_id
-            WHERE (? IS NULL OR m.workspace_id = ?)
+            WHERE (CAST(? AS TEXT) IS NULL OR m.workspace_id = ?)
             ORDER BY m.created_at
             """,
             params,

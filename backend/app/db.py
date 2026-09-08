@@ -114,7 +114,10 @@ class ConnectionAdapter:
             r"\bOR\s+IGNORE\b", sql, re.IGNORECASE
         ):
             normalized = normalized.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
-        return normalized.replace("?", "%s")
+        # psycopg treats every percent sign as part of its placeholder syntax,
+        # including percent signs inside SQL string literals. Escape literal
+        # percents before converting the repository's qmark placeholders.
+        return normalized.replace("%", "%%").replace("?", "%s")
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         return self.raw.execute(self._sql(sql), params)
