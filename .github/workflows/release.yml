@@ -66,7 +66,7 @@ jobs:
           npm sbom --package-lock-only --sbom-format cyclonedx > ../release/agenttrust-npm.cdx.json
           cd ..
           sha256sum release/* > release/SHA256SUMS
-      - uses: actions/attest-build-provenance@v3
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: release/*
       - uses: actions/upload-artifact@v5
