@@ -1,2 +1,2 @@
 # Optional S3 Object Lock anchor sink. Credentials use the AWS default provider chain.
-boto3>=1.40,<2
+boto3>=1.43.98,<2
