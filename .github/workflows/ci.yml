@@ -54,7 +54,7 @@ jobs:
           --cov-report=xml:coverage.xml
           --cov-fail-under=75
       - name: Upload backend coverage
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: backend-coverage
           path: backend/coverage.xml
@@ -106,7 +106,7 @@ jobs:
         working-directory: frontend
         run: npm sbom --package-lock-only --sbom-format cyclonedx > npm.cdx.json
       - name: Upload frontend SBOM
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-sbom
           path: frontend/npm.cdx.json
@@ -128,7 +128,7 @@ jobs:
           --format cyclonedx-json
           --output python.cdx.json
       - name: Upload Python SBOM
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: python-sbom
           path: python.cdx.json
